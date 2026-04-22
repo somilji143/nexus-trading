@@ -1,0 +1,160 @@
+/* NEXUS — Institutional Signal Platform — Styles */
+/* Bloomberg Terminal meets Modern SaaS */
+
+:root {
+  --bg: #050508;
+  --surface: #0d0d14;
+  --surface2: #12121c;
+  --border: #1a1a2e;
+  --border-bright: #252540;
+  --accent-gold: #f59e0b;
+  --accent-green: #10b981;
+  --accent-red: #ef4444;
+  --accent-blue: #3b82f6;
+  --text: #e2e8f0;
+  --text2: #94a3b8;
+  --text3: #64748b;
+  --text4: #334155;
+  --font-mono: 'IBM Plex Mono', monospace;
+  --font-sans: 'Sora', sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--font-sans); min-height: 100vh; }
+
+/* ─── Top Bar ───────────────────────────────────── */
+#topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 100; backdrop-filter: blur(8px);
+}
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+.logo { font-family: var(--font-sans); font-weight: 800; font-size: 20px; color: var(--accent-gold); letter-spacing: 2px; }
+.logo-n { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: linear-gradient(135deg, var(--accent-gold), #d97706); color: #000; font-weight: 800; font-size: 14px; margin-right: 6px; }
+.subtitle { font-size: 10px; color: var(--text3); letter-spacing: 2px; }
+.price-ticker { display: flex; gap: 20px; font-family: var(--font-mono); font-size: 12px; }
+.ticker-item { display: flex; gap: 6px; align-items: center; }
+.ticker-symbol { color: var(--text2); font-weight: 600; }
+.ticker-price { color: var(--text); font-weight: 700; }
+.ticker-change { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+.ticker-change.up { background: rgba(16,185,129,0.15); color: var(--accent-green); }
+.ticker-change.down { background: rgba(239,68,68,0.15); color: var(--accent-red); }
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+.session-badge { padding: 4px 12px; border-radius: 20px; font-size: 10px; font-weight: 700; letter-spacing: 1px; background: linear-gradient(135deg, #10b981, #059669); color: #000; }
+.clock { font-family: var(--font-mono); font-size: 12px; color: var(--text2); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-green); animation: pulse 2s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ─── Main ──────────────────────────────────────── */
+main { max-width: 1500px; margin: 0 auto; padding: 20px 24px; }
+
+/* ─── Stats Row ─────────────────────────────────── */
+.stats-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 20px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; border-top: 2px solid var(--border-bright); transition: border-color 0.3s; }
+.stat-card:hover { border-top-color: var(--accent-gold); }
+.stat-label { display: block; font-size: 9px; color: var(--text3); letter-spacing: 1.5px; font-weight: 600; margin-bottom: 6px; }
+.stat-value { display: block; font-family: var(--font-mono); font-size: 22px; font-weight: 700; color: var(--text); }
+.stat-value.green { color: var(--accent-green); }
+.stat-value.red { color: var(--accent-red); }
+
+/* ─── Controls ──────────────────────────────────── */
+.controls-row { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+select { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 8px 14px; border-radius: 6px; font-family: var(--font-mono); font-size: 13px; cursor: pointer; }
+select:hover { border-color: var(--border-bright); }
+.btn-primary { background: linear-gradient(135deg, var(--accent-gold), #d97706); color: #000; font-weight: 700; padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; transition: transform 0.15s, box-shadow 0.15s; font-family: var(--font-sans); }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(245,158,11,0.3); }
+.btn-secondary { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: border-color 0.2s; font-family: var(--font-sans); }
+.btn-secondary:hover { border-color: var(--accent-blue); }
+.btn-ghost { background: none; border: 1px solid var(--border); color: var(--text2); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-family: var(--font-sans); }
+.btn-ghost:hover { color: var(--text); border-color: var(--text3); }
+
+/* ─── Chart + Signal ────────────────────────────── */
+.chart-signal-row { display: grid; grid-template-columns: 1fr 380px; gap: 16px; margin-bottom: 20px; }
+.chart-container { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.chart-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.chart-header span:first-child { font-weight: 600; font-size: 13px; color: var(--text2); }
+.chart-price { font-family: var(--font-mono); font-weight: 700; color: var(--accent-green); font-size: 14px; }
+.signal-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+.signal-empty { text-align: center; padding: 50px 20px; }
+.signal-icon { font-size: 36px; margin-bottom: 12px; }
+.signal-empty h3 { font-size: 16px; margin-bottom: 6px; color: var(--text2); }
+.signal-empty p { font-size: 12px; color: var(--text3); }
+
+/* Signal Card */
+.signal-card { animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.signal-direction { font-size: 20px; font-weight: 800; text-align: center; padding: 10px; border-radius: 6px; margin-bottom: 12px; letter-spacing: 3px; }
+.signal-direction.long { background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(16,185,129,0.05)); color: var(--accent-green); border: 1px solid rgba(16,185,129,0.3); }
+.signal-direction.short { background: linear-gradient(135deg, rgba(239,68,68,0.2), rgba(239,68,68,0.05)); color: var(--accent-red); border: 1px solid rgba(239,68,68,0.3); }
+.signal-tier { text-align: center; font-size: 14px; font-weight: 700; color: var(--accent-gold); margin-bottom: 12px; }
+.signal-score-bar { background: var(--surface2); border-radius: 4px; height: 24px; position: relative; overflow: hidden; margin-bottom: 16px; }
+.score-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+.signal-score-bar span { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 11px; font-weight: 700; font-family: var(--font-mono); color: var(--text); }
+.signal-levels { margin-bottom: 16px; }
+.level-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; font-family: var(--font-mono); }
+.level-row span:first-child { color: var(--text2); }
+.level-row span:last-child { font-weight: 600; }
+.level-row.sl span:last-child { color: var(--accent-red); }
+.level-row.tp span:last-child { color: var(--accent-green); }
+.signal-regime, .signal-session { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+.signal-reasoning { font-size: 10px; color: var(--text4); margin-top: 8px; line-height: 1.5; }
+.hidden { display: none !important; }
+
+/* ─── Confluence ────────────────────────────────── */
+.confluence-section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+.confluence-section h2 { font-size: 14px; margin-bottom: 16px; color: var(--text2); }
+.confluence-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.confl-item { background: var(--surface2); border-radius: 6px; padding: 12px; }
+.confl-item .label { font-size: 10px; color: var(--text3); letter-spacing: 1px; margin-bottom: 6px; }
+.confl-item .bar { background: var(--bg); height: 6px; border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
+.confl-item .bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+.confl-item .value { font-family: var(--font-mono); font-size: 13px; font-weight: 700; }
+
+/* ─── Panels ────────────────────────────────────── */
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+.panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.panel-header h2 { font-size: 14px; color: var(--text2); }
+.badge { background: var(--surface2); padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; color: var(--accent-green); font-family: var(--font-mono); }
+
+/* ─── Tables ────────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th { text-align: left; padding: 8px 12px; color: var(--text3); font-size: 10px; letter-spacing: 1.5px; font-weight: 600; border-bottom: 1px solid var(--border); }
+.data-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); color: var(--text); }
+.data-table tr:hover td { background: rgba(255,255,255,0.02); }
+.data-table .empty { text-align: center; color: var(--text4); padding: 30px; font-family: var(--font-mono); }
+td.green { color: var(--accent-green) !important; }
+td.red { color: var(--accent-red) !important; }
+td.gold { color: var(--accent-gold) !important; }
+
+/* ─── Monte Carlo ───────────────────────────────── */
+.mc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.mc-card { background: var(--surface2); border-radius: 6px; padding: 12px; text-align: center; }
+.mc-card .label { font-size: 9px; color: var(--text3); letter-spacing: 1px; }
+.mc-card .value { font-family: var(--font-mono); font-size: 18px; font-weight: 700; margin-top: 4px; }
+
+/* ─── Paper Trading ─────────────────────────────── */
+.pt-controls { display: flex; gap: 8px; align-items: center; }
+.btn-toggle { background: rgba(16,185,129,0.15); border: 1px solid var(--accent-green); color: var(--accent-green); padding: 4px 14px; border-radius: 20px; cursor: pointer; font-size: 11px; font-weight: 700; letter-spacing: 1px; font-family: var(--font-mono); transition: all 0.2s; }
+.btn-toggle.active { animation: pulse 2s infinite; }
+.btn-toggle.inactive { background: rgba(239,68,68,0.15); border-color: var(--accent-red); color: var(--accent-red); animation: none; }
+.btn-sm { padding: 4px 12px !important; font-size: 11px !important; }
+.pt-stats-row { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; margin-bottom: 16px; }
+.pt-stat { background: var(--surface2); border-radius: 6px; padding: 10px 12px; text-align: center; border: 1px solid var(--border); }
+.pt-label { display: block; font-size: 8px; color: var(--text3); letter-spacing: 1.5px; font-weight: 600; margin-bottom: 4px; }
+.pt-value { display: block; font-family: var(--font-mono); font-size: 16px; font-weight: 700; color: var(--text); }
+.sub-header { font-size: 12px; color: var(--text3); margin-bottom: 8px; letter-spacing: 1px; font-weight: 600; }
+
+/* ─── Footer ────────────────────────────────────── */
+footer { background: var(--surface); border-top: 1px solid var(--border); padding: 12px 24px; text-align: center; font-size: 9px; color: var(--text4); letter-spacing: 1px; }
+
+/* ─── Responsive ────────────────────────────────── */
+@media (max-width: 1100px) {
+  .chart-signal-row { grid-template-columns: 1fr; }
+  .stats-row { grid-template-columns: repeat(3, 1fr); }
+  .confluence-grid { grid-template-columns: repeat(2, 1fr); }
+  .mc-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+  .price-ticker { display: none; }
+}

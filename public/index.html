@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEXUS — Institutional Signal Platform</title>
+  <meta name="description" content="NEXUS: Real-time institutional-grade trading signals for XAUUSD, BTC, ETH with multi-factor confluence analysis.">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <!-- Top Bar -->
+  <header id="topbar">
+    <div class="topbar-left">
+      <div class="logo"><span class="logo-n">N</span>NEXUS</div>
+      <span class="subtitle">INSTITUTIONAL SIGNAL PLATFORM</span>
+    </div>
+    <div class="price-ticker" id="priceTicker"></div>
+    <div class="topbar-right">
+      <div class="session-badge" id="sessionBadge">—</div>
+      <div class="clock" id="clock">00:00:00 UTC</div>
+      <div class="status-dot" id="statusDot"></div>
+    </div>
+  </header>
+
+  <!-- Main Layout -->
+  <main id="app">
+    <!-- Stats Row -->
+    <section class="stats-row" id="statsRow">
+      <div class="stat-card"><span class="stat-label">SIGNALS TODAY</span><span class="stat-value" id="statSignals">0</span></div>
+      <div class="stat-card"><span class="stat-label">WIN RATE</span><span class="stat-value green" id="statWR">—</span></div>
+      <div class="stat-card"><span class="stat-label">PROFIT FACTOR</span><span class="stat-value" id="statPF">—</span></div>
+      <div class="stat-card"><span class="stat-label">TOTAL R</span><span class="stat-value green" id="statTotalR">—</span></div>
+      <div class="stat-card"><span class="stat-label">MAX DRAWDOWN</span><span class="stat-value red" id="statDD">—</span></div>
+      <div class="stat-card"><span class="stat-label">SHARPE</span><span class="stat-value" id="statSharpe">—</span></div>
+    </section>
+
+    <!-- Controls -->
+    <section class="controls-row">
+      <select id="assetSelect">
+        <option value="XAUUSD">XAUUSD (Gold)</option>
+        <option value="BTCUSDT">BTCUSDT (Bitcoin)</option>
+        <option value="ETHUSDT">ETHUSDT (Ethereum)</option>
+      </select>
+      <select id="tfSelect">
+        <option value="1h">1H</option>
+        <option value="4h">4H</option>
+        <option value="1d">1D</option>
+      </select>
+      <button class="btn-primary" id="btnGenerate">⚡ Generate Signal</button>
+      <button class="btn-secondary" id="btnScanAll">🔍 Scan All Assets</button>
+      <button class="btn-ghost" id="btnConfluence">📊 View Confluence</button>
+    </section>
+
+    <!-- Chart + Signal Panel -->
+    <section class="chart-signal-row">
+      <div class="chart-container">
+        <div class="chart-header">
+          <span id="chartTitle">XAUUSD — 1H</span>
+          <span class="chart-price" id="chartPrice">—</span>
+        </div>
+        <div id="chart" style="width:100%;height:400px;"></div>
+      </div>
+      <div class="signal-panel" id="signalPanel">
+        <div class="signal-empty" id="signalEmpty">
+          <div class="signal-icon">⚡</div>
+          <h3>No Active Signal</h3>
+          <p>Select an asset and click "Generate Signal" to scan for setups</p>
+        </div>
+        <div class="signal-card hidden" id="signalCard">
+          <div class="signal-direction" id="sigDirection">LONG</div>
+          <div class="signal-tier" id="sigTier">A+</div>
+          <div class="signal-score-bar"><div class="score-fill" id="sigScoreFill"></div><span id="sigScoreText">84%</span></div>
+          <div class="signal-levels">
+            <div class="level-row"><span>Entry</span><span id="sigEntry">—</span></div>
+            <div class="level-row sl"><span>Stop Loss</span><span id="sigSL">—</span></div>
+            <div class="level-row tp"><span>TP1 (1.5R)</span><span id="sigTP1">—</span></div>
+            <div class="level-row tp"><span>TP2 (2.5R)</span><span id="sigTP2">—</span></div>
+            <div class="level-row tp"><span>TP3 (4.0R)</span><span id="sigTP3">—</span></div>
+          </div>
+          <div class="signal-regime" id="sigRegime">—</div>
+          <div class="signal-session" id="sigSession">—</div>
+          <div class="signal-reasoning" id="sigReasoning">—</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Confluence Breakdown -->
+    <section class="confluence-section hidden" id="confluenceSection">
+      <h2>📊 Confluence Breakdown</h2>
+      <div class="confluence-grid" id="confluenceGrid"></div>
+    </section>
+
+    <!-- Live Signals -->
+    <section class="panel">
+      <div class="panel-header"><h2>🔴 Live Signals</h2><span class="badge" id="liveCount">0</span></div>
+      <table class="data-table" id="liveTable">
+        <thead><tr><th>Asset</th><th>Dir</th><th>Tier</th><th>Entry</th><th>SL</th><th>TP2</th><th>Score</th><th>Status</th><th>Time</th></tr></thead>
+        <tbody id="liveBody"><tr><td colspan="9" class="empty">No active signals</td></tr></tbody>
+      </table>
+    </section>
+
+    <!-- Paper Trading -->
+    <section class="panel" id="paperTradingSection">
+      <div class="panel-header">
+        <h2>📈 Auto Paper Trading</h2>
+        <div class="pt-controls">
+          <button class="btn-toggle active" id="ptToggle" onclick="togglePaperTrading()">● LIVE</button>
+          <button class="btn-ghost btn-sm" onclick="closeAllPaperTrades()">Close All</button>
+          <button class="btn-ghost btn-sm" onclick="resetPaperTrading()">Reset</button>
+        </div>
+      </div>
+      <div class="pt-stats-row" id="ptStats">
+        <div class="pt-stat"><span class="pt-label">EQUITY</span><span class="pt-value" id="ptEquity">$10,000</span></div>
+        <div class="pt-stat"><span class="pt-label">P&L</span><span class="pt-value" id="ptPnL">$0.00</span></div>
+        <div class="pt-stat"><span class="pt-label">RETURN</span><span class="pt-value" id="ptReturn">0.0%</span></div>
+        <div class="pt-stat"><span class="pt-label">WIN RATE</span><span class="pt-value" id="ptWinRate">—</span></div>
+        <div class="pt-stat"><span class="pt-label">TOTAL R</span><span class="pt-value" id="ptTotalR">0R</span></div>
+        <div class="pt-stat"><span class="pt-label">W / L</span><span class="pt-value" id="ptWL">0 / 0</span></div>
+        <div class="pt-stat"><span class="pt-label">MAX DD</span><span class="pt-value" id="ptDD">0%</span></div>
+        <div class="pt-stat"><span class="pt-label">ACTIVE</span><span class="pt-value" id="ptActive">0</span></div>
+      </div>
+      <h3 class="sub-header">Active Trades</h3>
+      <table class="data-table">
+        <thead><tr><th>ID</th><th>Asset</th><th>Dir</th><th>Tier</th><th>Entry</th><th>Current</th><th>SL</th><th>TP1</th><th>TP2</th><th>Status</th><th>P&L</th><th>R</th></tr></thead>
+        <tbody id="ptActiveBody"><tr><td colspan="12" class="empty">No active paper trades</td></tr></tbody>
+      </table>
+      <h3 class="sub-header" style="margin-top:16px">Recent Closed Trades</h3>
+      <table class="data-table">
+        <thead><tr><th>ID</th><th>Asset</th><th>Dir</th><th>Entry</th><th>Exit</th><th>Reason</th><th>P&L</th><th>R</th><th>Duration</th></tr></thead>
+        <tbody id="ptClosedBody"><tr><td colspan="9" class="empty">No closed trades yet</td></tr></tbody>
+      </table>
+    </section>
+
+    <!-- Backtest Validation -->
+    <section class="panel">
+      <div class="panel-header"><h2>🧪 Strategy Validation</h2><span class="badge" id="btStatus">Pending</span></div>
+      <table class="data-table" id="btTable">
+        <thead><tr><th>Asset</th><th>TF</th><th>Trades</th><th>Win Rate</th><th>PF</th><th>Sharpe</th><th>Max DD</th><th>Avg R:R</th><th>Total R</th><th>Status</th></tr></thead>
+        <tbody id="btBody"><tr><td colspan="10" class="empty">Loading...</td></tr></tbody>
+      </table>
+    </section>
+
+    <!-- Monte Carlo -->
+    <section class="panel" id="mcSection">
+      <h2>🎲 Monte Carlo Simulation</h2>
+      <div class="mc-grid" id="mcGrid"></div>
+      <div id="equityChart" style="width:100%;height:300px;margin-top:16px;"></div>
+    </section>
+
+    <!-- Signal History -->
+    <section class="panel">
+      <div class="panel-header"><h2>📋 Signal History</h2><span class="badge" id="histCount">0</span></div>
+      <table class="data-table" id="histTable">
+        <thead><tr><th>Time</th><th>Asset</th><th>Dir</th><th>Tier</th><th>Entry</th><th>Exit</th><th>Result</th><th>R</th></tr></thead>
+        <tbody id="histBody"><tr><td colspan="8" class="empty">No closed signals yet</td></tr></tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer><span>NEXUS v2.0 — XAUUSD · BTCUSDT · ETHUSDT — Institutional Signal Platform</span></footer>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
