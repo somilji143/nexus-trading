@@ -1,8 +1,9 @@
-const API='';let chart,candleSeries,currentSymbol='XAUUSD',currentTF='1h',signalLines=[],lastSignalData=null;
+const API='';let chart,candleSeries,currentSymbol='XAUUSD',currentTF='1h',signalLines=[],lastSignalData=null,ws=null,wsConnected=false;
 
 document.addEventListener('DOMContentLoaded',()=>{
   initChart();loadMarketOverview();loadBacktestResults();loadLiveSignals();
   loadSignalHistory();loadPaperTrading();startClock();loadDataMode();autoScan();
+  initWebSocket();
   setInterval(loadMarketOverview,30000);setInterval(loadLiveSignals,60000);
   setInterval(loadSignalHistory,120000);setInterval(loadPaperTrading,5000);
   setInterval(loadDataMode,60000);setInterval(autoScan,120000);
@@ -290,3 +291,43 @@ function startClock(){setInterval(()=>{const n=new Date();document.getElementByI
 async function fetchJSON(url,opts){const r=await fetch(API+url,opts);if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json();}
 function fmtN(n){if(n==null||isNaN(n))return'—';return Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function fmtT(t){if(!t)return'—';const d=new Date(t);return d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false})+' '+d.toLocaleDateString('en-US',{month:'short',day:'numeric'});}
+
+// ─── WebSocket Live Feed ─────────────────────────
+function initWebSocket(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  const url=`${proto}://${location.host}/ws`;
+  try{ws=new WebSocket(url);}catch(e){console.error('WS error:',e);setTimeout(initWebSocket,5000);return;}
+  ws.onopen=()=>{wsConnected=true;ws.send(JSON.stringify({subscribe:currentSymbol}));updateWsBadge(true);};
+  ws.onclose=()=>{wsConnected=false;updateWsBadge(false);setTimeout(initWebSocket,5000);};
+  ws.onerror=()=>{};
+  ws.onmessage=(evt)=>{
+    try{
+      const msg=JSON.parse(evt.data);
+      if(msg.type==='price'&&msg.symbol===currentSymbol){
+        const p=document.getElementById('chartPrice');
+        p.textContent=`$${fmtN(msg.price)}`;p.style.color='#2196F3';
+        // Update market card
+        const cards=document.querySelectorAll('.market-card');
+        cards.forEach(c=>{if(c.querySelector('.mc-symbol')?.textContent===msg.symbol){c.querySelector('.mc-price').textContent=`$${fmtN(msg.price)}`;c.querySelector('.mc-price').style.color='#2196F3';}});
+      }
+      if(msg.type==='candle'&&msg.symbol===currentSymbol&&msg.tf==='1h'){
+        const c=msg.candle;
+        candleSeries.update({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close});
+      }
+      if(msg.type==='candle_close'&&msg.symbol===currentSymbol){
+        // Candle closed — trigger auto scan
+        setTimeout(autoScan,2000);
+      }
+      if(msg.type==='connection'){
+        updateWsBadge(msg.connected);
+      }
+    }catch(e){}
+  };
+}
+function updateWsBadge(connected){
+  const badge=document.getElementById('dataModeBadge');
+  if(!badge)return;
+  if(connected&&(currentSymbol==='BTCUSDT'||currentSymbol==='ETHUSDT')){
+    badge.className='badge badge-live';badge.innerHTML='<span class="mode-dot live"></span>LIVE WS';
+  }
+}

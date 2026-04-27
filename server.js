@@ -6,6 +6,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const http = require('http');
 const config = require('./src/core/config');
 const logger = require('./src/core/logger');
 const db = require('./src/db/database');
@@ -16,6 +17,7 @@ const { runBacktest, runMonteCarlo } = require('./src/backtester/engine');
 const { calculateFullConfluence } = require('./src/analysis_engine/confluence');
 const { getRiskState } = require('./src/signal_engine/risk_manager');
 const paperTrader = require('./src/paper_trading/engine');
+const { initLiveFeed, getLiveState } = require('./src/data_engine/liveFeed');
 
 const app = express();
 app.use(cors());
@@ -220,8 +222,14 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// ─── API: Live State ────────────────────────────
+app.get('/api/live-state', (req, res) => {
+  res.json(getLiveState());
+});
+
 // ─── Startup ────────────────────────────────────
-app.listen(config.port, () => {
+const server = http.createServer(app);
+server.listen(config.port, () => {
   console.log(`
   ╔══════════════════════════════════════════════════════╗
   ║   ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗       ║
@@ -230,11 +238,13 @@ app.listen(config.port, () => {
   ║   ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║       ║
   ║   ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║       ║
   ║   ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝╚══════╝       ║
-  ║   Institutional Signal Platform v3.0                 ║
+  ║   Institutional Signal Platform v4.0                 ║
   ║   Dashboard: http://localhost:${config.port}                   ║
+  ║   WebSocket: ws://localhost:${config.port}/ws                  ║
   ╚══════════════════════════════════════════════════════╝`);
 
   db.runMigrations();
+  initLiveFeed(server);
   runStartupBacktests();
   startScheduler();
 });
