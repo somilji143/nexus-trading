@@ -21,6 +21,10 @@ const riskState = {
   lastDailyReset: new Date().toDateString(),
   lastWeeklyReset: getWeekId(),
   totalOpenExposure: 0,
+  tradesToday: 0,
+  consecutiveLosses: 0,
+  drawdownPct: 0,
+  peakEquity: 10000,
   paused: false,
   pauseReason: null,
 };
@@ -35,6 +39,7 @@ function resetDailyIfNeeded() {
   const today = new Date().toDateString();
   if (riskState.lastDailyReset !== today) {
     riskState.dailyLoss = 0;
+    riskState.tradesToday = 0;
     riskState.lastDailyReset = today;
   }
   const week = getWeekId();
@@ -42,12 +47,36 @@ function resetDailyIfNeeded() {
     riskState.weeklyLoss = 0;
     riskState.lastWeeklyReset = week;
   }
+  // Unpause if drawdown recovered
+  if (riskState.paused && riskState.drawdownPct < config.risk.maxDrawdown * 0.5) {
+    riskState.paused = false;
+    riskState.pauseReason = null;
+  }
 }
 
 function recordLoss(amount) {
   resetDailyIfNeeded();
   riskState.dailyLoss += amount;
   riskState.weeklyLoss += amount;
+  riskState.consecutiveLosses++;
+  // Update drawdown
+  const currentEquity = riskState.peakEquity - riskState.dailyLoss;
+  riskState.drawdownPct = riskState.peakEquity > 0 ? ((riskState.peakEquity - currentEquity) / riskState.peakEquity) * 100 : 0;
+  if (riskState.consecutiveLosses >= 3) {
+    logger.warn(MOD, `Loss streak: ${riskState.consecutiveLosses} — reducing risk`);
+  }
+}
+
+function recordWin() {
+  riskState.consecutiveLosses = 0;
+  // Update peak equity
+  const currentEquity = riskState.peakEquity - riskState.dailyLoss;
+  if (currentEquity > riskState.peakEquity) riskState.peakEquity = currentEquity;
+}
+
+function recordTrade() {
+  resetDailyIfNeeded();
+  riskState.tradesToday++;
 }
 
 // ─── Main Entry Risk Calculation ────────────────
@@ -89,6 +118,16 @@ function calculateEntryRisk(direction, currentPrice, candles1h, confluenceData, 
     if (sameDir.length >= (config.risk.maxCorrelatedExposure || 1)) {
       return reject([`Correlated exposure: ${sameDir.length} crypto trades in ${direction}`]);
     }
+  }
+
+  // 6. Max trades per day
+  if (riskState.tradesToday >= 6) {
+    return reject([`Max trades per day reached: ${riskState.tradesToday}`]);
+  }
+
+  // 7. Consecutive loss cooldown
+  if (riskState.consecutiveLosses >= 3) {
+    warnings.push(`Loss streak: ${riskState.consecutiveLosses} — risk halved`);
   }
 
   // ─── ATR Calculation ───────────────────────────
@@ -180,7 +219,20 @@ function calculateEntryRisk(direction, currentPrice, candles1h, confluenceData, 
   }
 
   // ─── Position Sizing ──────────────────────────
-  const riskPct = config.risk.riskPerTrade || 0.01;
+  let riskPct = config.risk.riskPerTrade || 0.01;
+
+  // Loss streak risk reduction
+  if (riskState.consecutiveLosses >= 3) {
+    riskPct *= 0.5;
+    warnings.push(`Risk halved due to ${riskState.consecutiveLosses} consecutive losses`);
+  }
+
+  // Drawdown risk reduction
+  if (riskState.drawdownPct > 10) {
+    riskPct *= 0.5;
+    warnings.push(`Risk halved due to drawdown: ${riskState.drawdownPct.toFixed(1)}%`);
+  }
+
   const riskAmount = config.risk.accountSize * riskPct;
   const positionSize = slDistance > 0 ? riskAmount / slDistance : 0;
 
@@ -250,4 +302,4 @@ function getRiskState() {
 
 function r(v) { return Math.round(v * 100) / 100; }
 
-module.exports = { calculateEntryRisk, updateTrailingStop, recordLoss, getRiskState };
+module.exports = { calculateEntryRisk, updateTrailingStop, recordLoss, recordWin, recordTrade, getRiskState };

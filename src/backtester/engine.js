@@ -277,12 +277,35 @@ function computeStats(trades, equityCurve, symbol, finalEquity, maxEquity) {
   if (maxDD > config.backtest.maxDrawdown) failures.push(`DD ${(maxDD * 100).toFixed(1)}% > ${config.backtest.maxDrawdown * 100}%`);
   if (sharpe < config.backtest.minSharpe) failures.push(`Sharpe ${sharpe.toFixed(2)} < ${config.backtest.minSharpe}`);
   if (total < config.backtest.minTradesForValidation) failures.push(`Trades ${total} < ${config.backtest.minTradesForValidation}`);
+  // Sortino ratio (downside deviation only)
+  let sortino = 0;
+  if (rValues.length > 1) {
+    const mean = totalR / rValues.length;
+    const downside = rValues.filter(v => v < 0);
+    if (downside.length > 0) {
+      const downsideVar = downside.reduce((s, v) => s + v ** 2, 0) / downside.length;
+      sortino = Math.sqrt(downsideVar) > 0 ? (mean / Math.sqrt(downsideVar)) * Math.sqrt(252) : 0;
+    } else if (mean > 0) sortino = 99;
+  }
+
+  // Monthly returns (from trade timestamps)
+  const monthlyReturns = {};
+  for (const t of trades) {
+    if (!t.entryTime) continue;
+    const d = new Date(t.entryTime * 1000);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (!monthlyReturns[key]) monthlyReturns[key] = 0;
+    monthlyReturns[key] += t.pnl || 0;
+  }
+  // Round monthly values
+  for (const k of Object.keys(monthlyReturns)) monthlyReturns[k] = Math.round(monthlyReturns[k] * 100) / 100;
 
   return {
     totalTrades: total, wins, losses,
     winRate: Math.round(wr * 1000) / 10,
     profitFactor: pf === Infinity ? '∞' : Math.round(pf * 100) / 100,
     sharpe: Math.round(sharpe * 100) / 100,
+    sortino: Math.round(sortino * 100) / 100,
     maxDrawdown: Math.round(maxDD * 1000) / 10,
     avgRR: Math.round(avgR * 100) / 100,
     avgWinR: Math.round(avgWinR * 100) / 100,
@@ -290,6 +313,7 @@ function computeStats(trades, equityCurve, symbol, finalEquity, maxEquity) {
     totalR: Math.round(totalR * 100) / 100,
     maxConsecWins: maxCW, maxConsecLosses: maxCL,
     expectancy: Math.round((wr * avgWinR - (1 - wr) * avgLossR) * 100) / 100,
+    monthlyReturns,
     isValid, failures,
     equityCurve, trades,
   };
