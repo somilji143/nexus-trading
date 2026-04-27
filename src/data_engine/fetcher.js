@@ -5,7 +5,7 @@
  */
 const logger = require('../core/logger');
 const config = require('../core/config');
-const { generateDemoData } = require('./demo-data');
+const { generateDemoData, getDemoLivePrice } = require('./demo-data');
 
 const MOD = 'Fetcher';
 
@@ -118,10 +118,15 @@ async function getLatestPrice(symbol) {
   } catch (err) {
     logger.error(MOD, `Price fetch failed for ${symbol}`, { error: err.message });
   }
-  // Fallback: use last candle from cache
+  // Fallback: use demo live price (consistent small-drift pricing)
   const cached = getCached(`ohlcv:${symbol}:1h`);
-  if (cached && cached.length) return { price: cached[cached.length - 1].close, change24h: 0 };
-  return { price: config.assets[symbol]?.base || 0, change24h: 0 };
+  if (cached && cached.length) {
+    const lastClose = cached[cached.length - 1].close;
+    const prevClose = cached.length > 24 ? cached[cached.length - 25].close : lastClose;
+    const change = prevClose > 0 ? ((lastClose - prevClose) / prevClose) * 100 : 0;
+    return { price: getDemoLivePrice(symbol), change24h: Math.round(change * 100) / 100 };
+  }
+  return { price: getDemoLivePrice(symbol), change24h: 0 };
 }
 
 // ─── CoinGecko OHLC ────────────────────────────

@@ -17,13 +17,16 @@ document.addEventListener('DOMContentLoaded', () => {
   loadPerformance();
   loadPaperTrading();
   startClock();
+  autoLoadConfluence();
   // Auto-refresh
   setInterval(loadPrices, 30000);
   setInterval(loadLiveSignals, 60000);
   setInterval(loadSignalHistory, 120000);
-  setInterval(loadPaperTrading, 5000); // Paper trading: every 5s
+  setInterval(loadPaperTrading, 5000);
+  setInterval(loadPerformance, 30000); // Refresh stats after backtests complete
+  setInterval(autoLoadConfluence, 120000); // Refresh confluence every 2 min
   // Controls
-  document.getElementById('assetSelect').addEventListener('change', e => { currentSymbol = e.target.value; loadChart(); });
+  document.getElementById('assetSelect').addEventListener('change', e => { currentSymbol = e.target.value; loadChart(); autoLoadConfluence(); });
   document.getElementById('tfSelect').addEventListener('change', e => { currentTF = e.target.value; loadChart(); });
   document.getElementById('btnGenerate').addEventListener('click', generateSignal);
   document.getElementById('btnScanAll').addEventListener('click', scanAll);
@@ -153,8 +156,22 @@ function showNoSignal(confluence, msg) {
   document.getElementById('signalCard').classList.add('hidden');
   const el = document.getElementById('signalEmpty');
   el.classList.remove('hidden');
-  const reason = msg || (confluence ? `Score: ${confluence.finalScore} — ${confluence.reason || 'Neutral zone'}` : 'No valid setup found');
+  const reason = msg || (confluence ? `Score: ${confluence.finalScore?.toFixed ? confluence.finalScore.toFixed(2) : confluence.finalScore} — ${confluence.reason || 'Confluence in neutral zone'}` : 'No valid setup found');
   el.querySelector('p').textContent = reason;
+}
+
+async function autoLoadConfluence() {
+  try {
+    const data = await fetchJSON(`/api/assets/${currentSymbol}/confluence`);
+    if (data && data.finalScore !== undefined) {
+      const score = Math.round((data.finalScore || 0) * 100);
+      const el = document.getElementById('signalEmpty');
+      el.classList.remove('hidden');
+      document.getElementById('signalCard').classList.add('hidden');
+      el.querySelector('h3').textContent = score >= 72 ? '🟢 Signal Possible' : score >= 50 ? '🟡 Watching' : '⚪ No Setup';
+      el.querySelector('p').textContent = `${currentSymbol} confluence: ${score}% (need 72% for signal)`;
+    }
+  } catch (e) {}
 }
 
 // ─── CONFLUENCE VIEW ────────────────────────────
@@ -218,13 +235,43 @@ async function loadSignalHistory() {
 // ─── PERFORMANCE ────────────────────────────────
 async function loadPerformance() {
   try {
+    // Try to get backtest results for top stats (more meaningful than live)
+    const btData = await fetchJSON('/api/backtest');
+    if (btData && btData.status === 'done' && btData.results) {
+      let bestWR = 0, bestPF = 0, bestR = 0, bestSharpe = 0, bestDD = Infinity, totalSignals = 0;
+      for (const [sym, tfs] of Object.entries(btData.results)) {
+        for (const [tf, r] of Object.entries(tfs)) {
+          if (r.error || !r.totalTrades) continue;
+          if (r.winRate > bestWR) bestWR = r.winRate;
+          if (r.profitFactor > bestPF && r.profitFactor < 999) bestPF = r.profitFactor;
+          if (r.totalR > bestR) bestR = r.totalR;
+          if (r.sharpe > bestSharpe) bestSharpe = r.sharpe;
+          if (r.maxDrawdown < bestDD) bestDD = r.maxDrawdown;
+          totalSignals += r.totalTrades || 0;
+        }
+      }
+      const wrEl = document.getElementById('statWR');
+      const pfEl = document.getElementById('statPF');
+      const ddEl = document.getElementById('statDD');
+      document.getElementById('statSignals').textContent = totalSignals;
+      wrEl.textContent = `${bestWR}%`; wrEl.className = `stat-value ${bestWR >= 55 ? 'green' : 'red'}`;
+      pfEl.textContent = bestPF.toFixed(2); pfEl.className = `stat-value ${bestPF >= 1.4 ? 'green' : 'red'}`;
+      document.getElementById('statTotalR').textContent = `${bestR}R`;
+      ddEl.textContent = `${bestDD}%`; ddEl.className = `stat-value ${bestDD <= 20 ? 'green' : 'red'}`;
+      document.getElementById('statSharpe').textContent = bestSharpe.toFixed(2);
+      return;
+    }
+  } catch (e) {}
+
+  // Fallback: live performance
+  try {
     const stats = await fetchJSON('/api/performance');
     document.getElementById('statSignals').textContent = stats.totalSignals || 0;
-    document.getElementById('statWR').textContent = stats.winRate ? `${stats.winRate}%` : '—';
-    document.getElementById('statPF').textContent = stats.profitFactor || '—';
-    document.getElementById('statTotalR').textContent = stats.totalR ? `${stats.totalR}R` : '—';
-    document.getElementById('statDD').textContent = stats.maxDrawdown ? `${stats.maxDrawdown}%` : '—';
-    document.getElementById('statSharpe').textContent = stats.sharpe || '—';
+    document.getElementById('statWR').textContent = stats.winRate ? `${stats.winRate}%` : 'N/A';
+    document.getElementById('statPF').textContent = stats.profitFactor || 'N/A';
+    document.getElementById('statTotalR').textContent = stats.totalR ? `${stats.totalR}R` : '0R';
+    document.getElementById('statDD').textContent = stats.maxDrawdown ? `${stats.maxDrawdown}%` : '0%';
+    document.getElementById('statSharpe').textContent = stats.sharpe || 'N/A';
   } catch (e) {}
 }
 

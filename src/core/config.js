@@ -17,9 +17,9 @@ const config = {
 
   // ─── Assets ────────────────────────────────────
   assets: {
-    XAUUSD: { name: 'Gold', type: 'commodity', pipValue: 0.10, spread: 0.30, roundStep: 50, base: 2400 },
-    BTCUSDT: { name: 'Bitcoin', type: 'crypto', pipValue: 0.01, spread: 15.0, roundStep: 5000, base: 65000 },
-    ETHUSDT: { name: 'Ethereum', type: 'crypto', pipValue: 0.01, spread: 1.50, roundStep: 100, base: 2800 },
+    XAUUSD: { name: 'Gold', type: 'commodity', pipValue: 0.10, spread: 0.30, roundStep: 50, base: 3300 },
+    BTCUSDT: { name: 'Bitcoin', type: 'crypto', pipValue: 0.01, spread: 15.0, roundStep: 5000, base: 94000 },
+    ETHUSDT: { name: 'Ethereum', type: 'crypto', pipValue: 0.01, spread: 1.50, roundStep: 100, base: 1800 },
   },
 
   // ─── Timeframes ────────────────────────────────
