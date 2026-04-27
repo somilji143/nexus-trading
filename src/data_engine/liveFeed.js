@@ -1,22 +1,27 @@
 /**
  * NEXUS — Live WebSocket Feed
- * Connects to Binance WebSocket for BTC/ETH real-time klines + trades.
+ * Connects to Binance Spot WS for BTC/ETH and Binance Futures WS for XAUUSD (Gold).
  * Broadcasts to connected frontend clients via local WS server.
- * For XAUUSD: polls REST every 10s (no free WS available).
  */
 const WebSocket = require('ws');
 const logger = require('../core/logger');
 const MOD = 'LiveFeed';
 
 const BINANCE_WS = 'wss://stream.binance.com:9443/ws';
-const BINANCE_STREAMS = {
-  BTCUSDT: { trade: 'btcusdt@trade', kline1m: 'btcusdt@kline_1m', kline1h: 'btcusdt@kline_1h' },
-  ETHUSDT: { trade: 'ethusdt@trade', kline1m: 'ethusdt@kline_1m', kline1h: 'ethusdt@kline_1h' },
+const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/ws';
+const SPOT_STREAMS = {
+  BTCUSDT: { trade: 'btcusdt@trade', kline1h: 'btcusdt@kline_1h' },
+  ETHUSDT: { trade: 'ethusdt@trade', kline1h: 'ethusdt@kline_1h' },
+};
+const FUTURES_STREAMS = {
+  XAUUSDT: { trade: 'xauusdt@trade', kline1h: 'xauusdt@kline_1h' },
 };
 
 let binanceWS = null;
+let futuresWS = null;
 let localWSS = null;
 let reconnectTimer = null;
+let futuresReconnectTimer = null;
 const liveState = {
   prices: {},       // { BTCUSDT: { price, time, source } }
   candles: {},      // { BTCUSDT_1h: { open, high, low, close, volume, time, closed } }
@@ -43,14 +48,13 @@ function initLiveFeed(httpServer) {
   });
 
   connectBinance();
-  // XAUUSD polling (no free WS)
-  startXAUUSDPolling();
-  logger.info(MOD, 'Live feed initialized');
+  connectBinanceFutures();
+  logger.info(MOD, 'Live feed initialized (Spot + Futures WS)');
 }
 
 function connectBinance() {
   const streams = [];
-  for (const [, s] of Object.entries(BINANCE_STREAMS)) {
+  for (const [, s] of Object.entries(SPOT_STREAMS)) {
     streams.push(s.trade, s.kline1h);
   }
   const url = `${BINANCE_WS}/${streams.join('/')}`;
@@ -130,29 +134,58 @@ function handleKline(msg) {
   }
 }
 
-async function startXAUUSDPolling() {
-  const poll = async () => {
+function connectBinanceFutures() {
+  const streams = [];
+  for (const [, s] of Object.entries(FUTURES_STREAMS)) {
+    streams.push(s.trade, s.kline1h);
+  }
+  const url = `${BINANCE_FUTURES_WS}/${streams.join('/')}`;
+  try { futuresWS = new WebSocket(url); } catch (e) {
+    logger.error(MOD, 'Futures WS failed', { error: e.message });
+    scheduleFuturesReconnect(); return;
+  }
+  futuresWS.on('open', () => {
+    logger.info(MOD, '✅ Binance Futures WebSocket connected (XAUUSD)');
+    broadcast({ type: 'connection', connected: true, market: 'futures' });
+  });
+  futuresWS.on('message', (raw) => {
     try {
-      const fetch = require('node-fetch');
-      // Use a lightweight price endpoint
-      const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=XAUUSDT');
-      if (res.ok) {
-        const data = await res.json();
-        const price = parseFloat(data.price);
-        if (price > 0) {
-          liveState.prices.XAUUSD = { price, time: Date.now(), source: 'BINANCE_REST' };
-          broadcast({ type: 'price', symbol: 'XAUUSD', price, time: Date.now() });
+      const msg = JSON.parse(raw);
+      if (msg.e === 'trade') {
+        // Remap XAUUSDT → XAUUSD for frontend
+        const price = parseFloat(msg.p);
+        liveState.prices.XAUUSD = { price, time: msg.T, source: 'BINANCE_FUTURES_WS' };
+        liveState.lastUpdate = Date.now();
+        broadcast({ type: 'price', symbol: 'XAUUSD', price, time: msg.T });
+      } else if (msg.e === 'kline') {
+        const k = msg.k;
+        const candle = {
+          time: Math.floor(k.t / 1000), open: parseFloat(k.o), high: parseFloat(k.h),
+          low: parseFloat(k.l), close: parseFloat(k.c), volume: parseFloat(k.v), closed: k.x,
+        };
+        liveState.candles[`XAUUSD_${k.i}`] = candle;
+        broadcast({ type: 'candle', symbol: 'XAUUSD', tf: k.i, candle });
+        if (k.x) {
+          broadcast({ type: 'candle_close', symbol: 'XAUUSD', tf: k.i, candle });
+          logger.info(MOD, `Candle closed: XAUUSD ${k.i} @ ${candle.close}`);
         }
       }
-    } catch (e) {
-      // XAUUSD not on Binance — use demo price
-      if (!liveState.prices.XAUUSD) {
-        liveState.prices.XAUUSD = { price: 0, time: Date.now(), source: 'UNAVAILABLE' };
-      }
-    }
-  };
-  await poll();
-  setInterval(poll, 10000);
+    } catch (e) {}
+  });
+  futuresWS.on('close', () => {
+    logger.warn(MOD, 'Futures WS disconnected');
+    scheduleFuturesReconnect();
+  });
+  futuresWS.on('error', (err) => logger.error(MOD, 'Futures WS error', { error: err.message }));
+}
+
+function scheduleFuturesReconnect() {
+  if (futuresReconnectTimer) return;
+  futuresReconnectTimer = setTimeout(() => {
+    futuresReconnectTimer = null;
+    logger.info(MOD, 'Reconnecting Futures WS...');
+    connectBinanceFutures();
+  }, 5000);
 }
 
 function broadcast(data) {

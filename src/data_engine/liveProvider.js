@@ -47,6 +47,39 @@ async function fetchBinanceOHLCV(symbol, timeframe, limit = 500) {
 }
 
 /**
+ * Fetch OHLCV from Binance Futures (Gold XAUUSDT) — free, no auth.
+ */
+async function fetchBinanceFuturesOHLCV(timeframe, limit = 500) {
+  limit = Math.min(limit, 1500); // Binance Futures max
+  const tfMap = { '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d', '1w': '1w' };
+  const interval = tfMap[timeframe];
+  if (!interval) return null;
+
+  const url = `https://fapi.binance.com/fapi/v1/klines?symbol=XAUUSDT&interval=${interval}&limit=${limit}`;
+  try {
+    const res = await fetchWithTimeout(url, 10000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+
+    const candles = data.map(k => ({
+      time: Math.floor(k[0] / 1000),
+      open: parseFloat(k[1]),
+      high: parseFloat(k[2]),
+      low: parseFloat(k[3]),
+      close: parseFloat(k[4]),
+      volume: parseFloat(k[5]),
+    }));
+
+    logger.info(MOD, `Binance Futures: ${candles.length} candles for XAUUSD/${timeframe}`);
+    return { candles, source: 'BINANCE_FUTURES' };
+  } catch (err) {
+    logger.warn(MOD, `Binance Futures fetch failed: XAUUSD/${timeframe}`, { error: err.message });
+    return null;
+  }
+}
+
+/**
  * Fetch OHLCV from TwelveData (Gold) — requires API key.
  */
 async function fetchTwelveDataOHLCV(timeframe, limit = 500) {
@@ -86,23 +119,27 @@ async function fetchTwelveDataOHLCV(timeframe, limit = 500) {
  * Get live price from Binance ticker.
  */
 async function getBinancePrice(symbol) {
-  const binanceSymbol = symbol === 'BTCUSDT' ? 'BTCUSDT' : symbol === 'ETHUSDT' ? 'ETHUSDT' : null;
-  if (!binanceSymbol) return null;
-
-  try {
-    const url = `${config.binanceBaseUrl}/api/v3/ticker/24hr?symbol=${binanceSymbol}`;
-    const res = await fetchWithTimeout(url, 5000);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return {
-      price: parseFloat(data.lastPrice),
-      change24h: parseFloat(data.priceChangePercent),
-      volume24h: parseFloat(data.volume),
-      source: 'BINANCE',
-    };
-  } catch (err) {
-    return null;
+  // Crypto: spot API
+  if (symbol === 'BTCUSDT' || symbol === 'ETHUSDT') {
+    try {
+      const url = `${config.binanceBaseUrl}/api/v3/ticker/24hr?symbol=${symbol}`;
+      const res = await fetchWithTimeout(url, 5000);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return { price: parseFloat(data.lastPrice), change24h: parseFloat(data.priceChangePercent), volume24h: parseFloat(data.volume), source: 'BINANCE' };
+    } catch (err) { return null; }
   }
+  // Gold: futures API
+  if (symbol === 'XAUUSD') {
+    try {
+      const url = 'https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=XAUUSDT';
+      const res = await fetchWithTimeout(url, 5000);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return { price: parseFloat(data.lastPrice), change24h: parseFloat(data.priceChangePercent), volume24h: parseFloat(data.volume), source: 'BINANCE_FUTURES' };
+    } catch (err) { return null; }
+  }
+  return null;
 }
 
 /**
@@ -115,7 +152,9 @@ async function fetchLiveOHLCV(symbol, timeframe, limit = 500) {
   if (symbol === 'BTCUSDT' || symbol === 'ETHUSDT') {
     result = await fetchBinanceOHLCV(symbol, timeframe, limit);
   } else if (symbol === 'XAUUSD') {
-    result = await fetchTwelveDataOHLCV(timeframe, limit);
+    // Try Binance Futures first (free, reliable), then TwelveData
+    result = await fetchBinanceFuturesOHLCV(timeframe, limit);
+    if (!result) result = await fetchTwelveDataOHLCV(timeframe, limit);
   }
 
   if (!result || !result.candles || result.candles.length < 10) {
@@ -143,4 +182,4 @@ async function fetchWithTimeout(url, timeoutMs = 10000) {
   }
 }
 
-module.exports = { fetchLiveOHLCV, fetchBinanceOHLCV, fetchTwelveDataOHLCV, getBinancePrice };
+module.exports = { fetchLiveOHLCV, fetchBinanceOHLCV, fetchBinanceFuturesOHLCV, fetchTwelveDataOHLCV, getBinancePrice };

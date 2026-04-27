@@ -327,7 +327,7 @@ function initWebSocket(){
 function updateWsBadge(connected){
   const badge=document.getElementById('dataModeBadge');
   if(!badge)return;
-  if(connected&&(currentSymbol==='BTCUSDT'||currentSymbol==='ETHUSDT')){
+  if(connected){
     badge.className='badge badge-live';badge.innerHTML='<span class="mode-dot live"></span>LIVE WS';
   }
 }
