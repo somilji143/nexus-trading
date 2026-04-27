@@ -1,12 +1,15 @@
 /**
- * NEXUS — Signal Generator + Tracker
- * Fires signals when confluence threshold met. Tracks outcomes.
+ * NEXUS v3 — Signal Generator + Tracker
+ * Risk-first. Strategy-classified. Fully explainable.
+ * Fires signals only when confluence + data quality + risk all pass.
  */
 const config = require('../core/config');
 const logger = require('../core/logger');
-const { fetchAllTimeframes, getLatestPrice } = require('../data_engine/fetcher');
+const { fetchAllTimeframes, getLatestPrice, getDataMode } = require('../data_engine/fetcher');
 const { calculateFullConfluence } = require('../analysis_engine/confluence');
-const { calculateEntryRisk, updateTrailingStop } = require('./risk_manager');
+const { calculateEntryRisk, updateTrailingStop, recordLoss } = require('./risk_manager');
+const { classifyStrategy } = require('../strategy/strategyClassifier');
+const { writeTradeAnalysis, writeSignalRisks } = require('../strategy/analysisWriter');
 const db = require('../db/database');
 const MOD = 'SignalEngine';
 
@@ -17,57 +20,82 @@ async function runSignalCheck(symbol) {
 
     // Step 1: Fetch data
     const allTF = await fetchAllTimeframes(symbol);
-    const { price } = await getLatestPrice(symbol);
-    if (!price) { logger.warn(MOD, `No price for ${symbol}`); return null; }
+    const { price, source: priceSource } = await getLatestPrice(symbol);
+    if (!price) { logger.warn(MOD, `No price for ${symbol}`); return { status: 'no_signal', reason: 'No price data' }; }
+    const dataMode = getDataMode(symbol);
 
-    // Step 2: Run confluence
+    // Step 2: Run confluence (includes data quality gate)
     const confluence = calculateFullConfluence(symbol, allTF, price, new Date());
-    logger.info(MOD, `Confluence for ${symbol}: ${confluence.direction} (score: ${confluence.finalScore})`, { scores: confluence.scores, regime: confluence.regime?.name });
+    logger.info(MOD, `Confluence for ${symbol}: ${confluence.direction} (score: ${confluence.finalScore})`,
+      { regime: confluence.regime?.name, dataMode });
+
+    // Step 3: Classify strategy
+    const strategy = classifyStrategy(
+      confluence.regime || {},
+      confluence.details?.smcDetails || {},
+      confluence.details?.mtfBreakdown || {},
+      confluence.details?.momentumDetails || {},
+      allTF['1h'] || [],
+      price
+    );
 
     if (confluence.direction === 'NO_SIGNAL') {
+      const analysis = writeTradeAnalysis({ ...confluence, symbol, strategy, dataMode });
       db.insertSystemRun({ runType: 'signal_check', symbol, result: 'no_signal', durationMs: Date.now() - startTime });
-      return { status: 'no_signal', confluence };
+      return {
+        status: 'no_signal',
+        confluence,
+        strategy,
+        analysis,
+        dataMode,
+        priceSource,
+      };
     }
 
-    // Step 3: Check duplicates
+    // Step 4: Check duplicates
     const openSignals = db.getOpenSignals(symbol);
     if (openSignals.length > 0) {
-      logger.info(MOD, `Skipping ${symbol} — already has open signal`);
-      return { status: 'skipped', reason: 'open_signal_exists', confluence };
+      return { status: 'skipped', reason: 'open_signal_exists', confluence, strategy, dataMode };
     }
 
-    // Step 4: Check cooldown
+    // Step 5: Cooldown
     const recent = db.countRecentSignals(symbol, confluence.direction, config.defaultThresholds.signalCooldownHours);
     if (recent > 0) {
-      logger.info(MOD, `Skipping ${symbol} — same direction fired within ${config.defaultThresholds.signalCooldownHours}h`);
-      return { status: 'skipped', reason: 'cooldown', confluence };
+      return { status: 'skipped', reason: 'cooldown', confluence, strategy, dataMode };
     }
 
-    // Step 5: Check max active signals
+    // Step 6: Max active signals
     const allOpen = db.getOpenSignals();
     if (allOpen.length >= config.defaultThresholds.maxActiveSignals) {
-      logger.info(MOD, `Skipping — max active signals (${allOpen.length})`);
-      return { status: 'skipped', reason: 'max_active', confluence };
+      return { status: 'skipped', reason: 'max_active', confluence, strategy, dataMode };
     }
 
-    // Step 6: Portfolio correlation guard (BTC + ETH same direction)
-    if (symbol !== 'XAUUSD') {
-      const otherCrypto = allOpen.filter(s => s.asset_symbol !== 'XAUUSD' && s.direction === confluence.direction);
-      if (otherCrypto.length > 0) {
-        logger.info(MOD, `Reducing confidence — correlated crypto exposure`);
-        // Don't block, but we could reduce size in risk manager
-      }
-    }
-
-    // Step 7: Calculate risk
-    const risk = calculateEntryRisk(confluence.direction, price, allTF['1h'], confluence, symbol);
+    // Step 7: Calculate risk (includes daily/weekly loss limits, correlation guard)
+    const risk = calculateEntryRisk(confluence.direction, price, allTF['1h'], confluence, symbol, allOpen);
     if (!risk.isValid) {
       logger.warn(MOD, `Signal rejected for ${symbol}: ${risk.rejectionReasons.join(', ')}`);
-      return { status: 'rejected', reason: risk.rejectionReasons, confluence, risk };
+      const analysis = writeTradeAnalysis({ ...confluence, symbol, strategy, risk, dataMode });
+      return { status: 'rejected', reason: risk.rejectionReasons, confluence, risk, strategy, analysis, dataMode };
     }
 
-    // Step 8: Create signal
-    const expiryTime = new Date(Date.now() + config.defaultThresholds.signalExpiryHours * 3600 * 1000).toISOString();
+    // Step 8: Strategy confidence check — no trade if strategy type is NONE
+    if (strategy.type === 'NONE') {
+      return {
+        status: 'no_signal',
+        reason: 'No clear strategy pattern',
+        confluence, risk, strategy, dataMode,
+        analysis: `${symbol}: Confluence score passed but no identifiable strategy pattern. Waiting for clearer setup.`,
+      };
+    }
+
+    // Step 9: Build analysis and risks
+    const signalData = { ...confluence, symbol, strategy, risk, dataMode };
+    const analysis = writeTradeAnalysis(signalData);
+    const risks = writeSignalRisks(signalData);
+
+    // Step 10: Create signal
+    const expiryTime = new Date(Date.now() + config.defaultThresholds.signalExpiryHours * 3600000).toISOString();
+    const reasoning = buildReasoning(confluence, risk, strategy, analysis);
     const signalId = db.insertSignal({
       asset_symbol: symbol,
       direction: confluence.direction,
@@ -84,18 +112,19 @@ async function runSignalCheck(symbol) {
       regime: confluence.regime.name,
       regime_confidence: confluence.regime.confidence,
       session_name: confluence.details?.sessionDetails?.name || 'unknown',
-      reasoning: buildReasoning(confluence, risk),
+      reasoning,
       expiry_time: expiryTime,
     });
 
-    db.insertSignalEvent(signalId, 'CREATED', risk.entry, `${confluence.tier} ${confluence.direction} signal — score ${confluence.finalScore}`);
+    db.insertSignalEvent(signalId, 'CREATED', risk.entry, `${confluence.tier} ${confluence.direction} | ${strategy.label} | Score ${confluence.finalScore}`);
     db.insertSystemRun({ runType: 'signal_check', symbol, result: 'signal_created', durationMs: Date.now() - startTime });
 
-    logger.info(MOD, `✅ SIGNAL CREATED: ${confluence.direction} ${symbol} [${confluence.tier}] @ ${risk.entry} | SL: ${risk.sl} | TP2: ${risk.tp2}`);
+    logger.info(MOD, `✅ SIGNAL: ${confluence.direction} ${symbol} [${confluence.tier}] | ${strategy.label} | Entry: ${risk.entry} | SL: ${risk.sl} | TP2: ${risk.tp2}`);
 
     return {
       status: 'signal',
-      signal: { id: signalId, symbol, ...confluence, ...risk },
+      signal: { id: signalId, symbol, ...confluence, ...risk, strategy, analysis, risks },
+      dataMode,
     };
   } catch (err) {
     logger.error(MOD, `Signal check failed for ${symbol}`, { error: err.message, stack: err.stack });
@@ -112,48 +141,46 @@ async function updateSignalOutcomes() {
       if (!price) continue;
       const isBuy = signal.direction === 'LONG';
 
-      // Check expiry
+      // Expiry
       if (signal.expiry_time && new Date(signal.expiry_time) < new Date()) {
         db.updateSignal(signal.id, { status: 'EXPIRED', closed_at: new Date().toISOString(), outcome_r: 0 });
         db.insertSignalEvent(signal.id, 'EXPIRED', price, 'Signal expired');
         continue;
       }
 
-      // Check SL
+      // SL hit
       if ((isBuy && price <= signal.sl_price) || (!isBuy && price >= signal.sl_price)) {
-        const outcomeR = signal.status === 'TP1_HIT' ? 0 : -1; // BE after TP1
-        db.updateSignal(signal.id, { status: 'LOSS', closed_at: new Date().toISOString(), outcome_r: outcomeR, pnl_usd: outcomeR * signal.sl_distance * (config.assets[signal.asset_symbol]?.pipValue || 0.01) });
+        const outcomeR = signal.status === 'TP1_HIT' ? 0 : -1;
+        const pnl = outcomeR * signal.sl_distance * (config.assets[signal.asset_symbol]?.pipValue || 0.01);
+        db.updateSignal(signal.id, { status: 'LOSS', closed_at: new Date().toISOString(), outcome_r: outcomeR, pnl_usd: pnl });
         db.insertSignalEvent(signal.id, 'SL_HIT', price, `Stop loss hit. R: ${outcomeR}`);
-        logger.info(MOD, `❌ ${signal.asset_symbol} SL hit @ ${price} | R: ${outcomeR}`);
+        if (outcomeR < 0) recordLoss(Math.abs(pnl));
         continue;
       }
 
-      // Check TP1
+      // TP1
       if (signal.status === 'OPEN') {
         if ((isBuy && price >= signal.tp1_price) || (!isBuy && price <= signal.tp1_price)) {
           db.updateSignal(signal.id, { status: 'TP1_HIT', trailing_sl: signal.entry_price });
           db.insertSignalEvent(signal.id, 'TP1_HIT', price, 'TP1 hit — SL moved to breakeven');
-          logger.info(MOD, `🎯 ${signal.asset_symbol} TP1 hit @ ${price} — SL → BE`);
           continue;
         }
       }
 
-      // Check TP2
+      // TP2
       if (signal.status === 'TP1_HIT') {
         if ((isBuy && price >= signal.tp2_price) || (!isBuy && price <= signal.tp2_price)) {
           db.updateSignal(signal.id, { status: 'TP2_HIT' });
-          db.insertSignalEvent(signal.id, 'TP2_HIT', price, 'TP2 hit — trailing stop active');
-          logger.info(MOD, `🎯🎯 ${signal.asset_symbol} TP2 hit @ ${price}`);
+          db.insertSignalEvent(signal.id, 'TP2_HIT', price, 'TP2 hit — trailing active');
           continue;
         }
       }
 
-      // Check TP3 (full win)
+      // TP3
       if ((isBuy && price >= signal.tp3_price) || (!isBuy && price <= signal.tp3_price)) {
         const rAchieved = config.risk.tp3R;
-        db.updateSignal(signal.id, { status: 'WIN', closed_at: new Date().toISOString(), outcome_r: rAchieved, pnl_usd: rAchieved * signal.sl_distance * (config.assets[signal.asset_symbol]?.pipValue || 0.01) });
+        db.updateSignal(signal.id, { status: 'WIN', closed_at: new Date().toISOString(), outcome_r: rAchieved });
         db.insertSignalEvent(signal.id, 'TP3_HIT', price, `Full win! R: ${rAchieved}`);
-        logger.info(MOD, `✅✅✅ ${signal.asset_symbol} TP3 hit @ ${price} | R: ${rAchieved}`);
       }
     } catch (err) {
       logger.error(MOD, `Tracker error for signal ${signal.id}`, { error: err.message });
@@ -161,15 +188,14 @@ async function updateSignalOutcomes() {
   }
 }
 
-function buildReasoning(confluence, risk) {
+function buildReasoning(confluence, risk, strategy, analysis) {
   const parts = [];
+  parts.push(`Strategy: ${strategy.label}`);
   parts.push(`Direction: ${confluence.direction} (score: ${confluence.finalScore})`);
-  parts.push(`Tier: ${confluence.tier}`);
-  parts.push(`Regime: ${confluence.regime.name} (${confluence.regime.confidence})`);
-  parts.push(`SMC: ${confluence.scores.smc} | MTF: ${confluence.scores.mtf} | Vol: ${confluence.scores.volume} | Mom: ${confluence.scores.momentum} | Key: ${confluence.scores.keyLevel}`);
-  if (confluence.details?.smcDetails?.trend1h) parts.push(`1H Trend: ${confluence.details.smcDetails.trend1h}`);
-  if (confluence.details?.mtfAlignment) parts.push(`MTF Alignment: ${confluence.details.mtfAlignment}`);
-  parts.push(`SL: ${risk.sl} (${risk.atrRatio}x ATR) | TP2: ${risk.tp2} (${risk.tp2R}R)`);
+  parts.push(`Tier: ${confluence.tier} | Regime: ${confluence.regime.name}`);
+  if (strategy.reasons) parts.push(`Setup: ${strategy.reasons[0]}`);
+  parts.push(`SL: ${risk.sl} (${risk.slMethod}) | TP2: ${risk.tp2} (${risk.tp2R}R)`);
+  parts.push(`R:R: ${risk.effectiveRR} | Data: ${confluence.dataMode}`);
   return parts.join(' | ');
 }
 

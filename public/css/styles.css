@@ -215,6 +215,28 @@ footer { background: var(--surface); border-top: 1px solid var(--border); paddin
 .src-demo { background: rgba(245,158,11,0.15); color: #f59e0b; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-family: var(--font-mono); }
 .src-live { background: rgba(16,185,129,0.15); color: #10b981; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-family: var(--font-mono); }
 
+/* ─── Strategy & Analysis ────────────────────────── */
+.signal-strategy {
+  font-size: 11px; font-family: var(--font-mono); font-weight: 600;
+  color: #3b82f6; background: rgba(59,130,246,0.1);
+  padding: 3px 8px; border-radius: 4px; margin: 4px 0;
+  border: 1px solid rgba(59,130,246,0.2);
+}
+.signal-analysis {
+  font-size: 11px; line-height: 1.5; color: var(--text2);
+  padding: 8px; margin-top: 6px;
+  background: var(--surface2); border-radius: 6px;
+  border-left: 3px solid var(--accent-blue);
+}
+.signal-risks {
+  font-size: 10px; color: #f59e0b; padding: 4px 0; margin-top: 4px;
+}
+.risk-tag {
+  display: inline-block; background: rgba(245,158,11,0.1);
+  padding: 2px 6px; border-radius: 3px; margin: 2px;
+  font-family: var(--font-mono); font-size: 10px;
+}
+
 /* ─── Footer ─────────────────────────────────────── */
 footer { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .footer-disclaimer { font-size: 10px; color: var(--text4); font-style: italic; }

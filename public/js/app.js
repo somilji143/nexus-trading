@@ -89,9 +89,9 @@ async function generateSignal(){
   try{
     const res=await fetchJSON(`/api/signals/generate/${currentSymbol}`,{method:'POST'});
     if(res.status==='signal'&&res.signal){showSignal(res.signal);showExplanation(res.signal);loadLiveSignals();}
-    else if(res.status==='no_signal'){showNoSignal(res.confluence);showExplanation(res.confluence);}
-    else if(res.status==='skipped'){showNoSignal(null,`Skipped: ${res.reason}`);if(res.confluence)showExplanation(res.confluence);}
-    else if(res.status==='rejected'){showNoSignal(null,`Rejected: ${(res.reason||[]).join(', ')}`);if(res.confluence)showExplanation(res.confluence);}
+    else if(res.status==='no_signal'){showNoSignal(res);showExplanation(res.confluence||res);}
+    else if(res.status==='skipped'){showNoSignal(res,`Skipped: ${res.reason}`);if(res.confluence)showExplanation(res.confluence);}
+    else if(res.status==='rejected'){showNoSignal(res,`Rejected: ${(res.reason||[]).join(', ')}`);if(res.confluence)showExplanation(res.confluence);}
     else if(res.error){showNoSignal(null,res.error);}
   }catch(e){showNoSignal(null,'Error generating signal');}
   btn.textContent='⚡ Generate Signal';btn.disabled=false;
@@ -124,15 +124,23 @@ function showSignal(signal){
   const dq=document.getElementById('sigDataQuality');
   dq.textContent=`Data: ${signal.dataMode||'—'}`;
   dq.className=`signal-data-quality ${signal.dataMode==='LIVE'?'live':'demo'}`;
+  document.getElementById('sigStrategy').textContent=signal.strategy?.label||'Multi-factor';
+  document.getElementById('sigAnalysis').textContent=signal.analysis||'';
+  const risksEl=document.getElementById('sigRisks');
+  if(signal.risks&&signal.risks.length>0){
+    risksEl.innerHTML='<strong>⚠️ Risks:</strong> '+signal.risks.map(r=>`<span class="risk-tag">${r}</span>`).join(' ');
+  }else{risksEl.innerHTML='';}
   document.getElementById('sigInvalidation').textContent=signal.invalidationReason||'';
   document.getElementById('sigReasoning').textContent=signal.reasoning||'';
   addSignalOverlay(signal);
 }
 
-function showNoSignal(confluence,msg){
+function showNoSignal(data,msg){
   document.getElementById('signalCard').classList.add('hidden');
   const el=document.getElementById('signalEmpty');el.classList.remove('hidden');
-  const reason=msg||(confluence?`Score: ${confluence.finalScore?.toFixed?confluence.finalScore.toFixed(2):confluence.finalScore} — ${confluence.reason||'Neutral zone'}`:'No valid setup found');
+  const analysis=data?.analysis||msg||'No valid setup found';
+  const confluence=data?.confluence||data;
+  const reason=analysis||(confluence?`Score: ${confluence.finalScore?.toFixed?confluence.finalScore.toFixed(2):confluence.finalScore} — ${confluence.reason||'Neutral zone'}`:'No valid setup found');
   el.querySelector('p').textContent=reason;
 }
 
