@@ -158,3 +158,63 @@ footer { background: var(--surface); border-top: 1px solid var(--border); paddin
   .stats-row { grid-template-columns: repeat(2, 1fr); }
   .price-ticker { display: none; }
 }
+
+/* ─── Data Mode Badge ────────────────────────────── */
+.data-mode-badge {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 6px; font-size: 10px;
+  font-family: var(--font-mono); font-weight: 600; letter-spacing: 1px;
+}
+.data-mode-badge.live { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+.data-mode-badge.demo { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+.mode-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ─── Demo Banner ────────────────────────────────── */
+.demo-banner {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 8px 24px; background: rgba(245,158,11,0.1);
+  border-bottom: 1px solid rgba(245,158,11,0.2);
+  color: #f59e0b; font-size: 12px; font-family: var(--font-mono);
+}
+.dismiss-btn { background: none; border: none; color: #f59e0b; cursor: pointer; font-size: 14px; padding: 2px 6px; }
+
+/* ─── Explanation Panel ──────────────────────────── */
+.explanation-panel {
+  margin-top: 12px; padding: 12px; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.explanation-panel h4 { font-size: 13px; font-weight: 700; margin-bottom: 8px; font-family: var(--font-mono); }
+.check-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0; font-size: 11px; font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border);
+}
+.check-item:last-child { border-bottom: none; }
+.check-item.pass .check-icon { color: #10b981; }
+.check-item.fail .check-icon { color: #ef4444; }
+.check-icon { font-weight: 700; font-size: 13px; width: 16px; }
+.check-system { color: var(--text2); min-width: 100px; }
+.check-value { color: var(--text); font-weight: 600; min-width: 60px; }
+.check-detail { color: var(--text3); font-size: 10px; }
+.blocker-item { padding: 3px 0; font-size: 11px; color: #ef4444; font-family: var(--font-mono); }
+.blockers h5 { font-size: 11px; color: #ef4444; margin: 8px 0 4px; }
+
+/* ─── Signal Extras ──────────────────────────────── */
+.signal-invalidation {
+  font-size: 10px; color: #ef4444; padding: 6px 8px;
+  background: rgba(239,68,68,0.08); border-radius: 4px;
+  margin-top: 6px; font-family: var(--font-mono);
+}
+.signal-data-quality { font-size: 10px; font-family: var(--font-mono); padding: 2px 6px; border-radius: 4px; }
+.signal-data-quality.live { color: #10b981; background: rgba(16,185,129,0.1); }
+.signal-data-quality.demo { color: #f59e0b; background: rgba(245,158,11,0.1); }
+.signal-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+/* ─── Data Source Badges ─────────────────────────── */
+.src-demo { background: rgba(245,158,11,0.15); color: #f59e0b; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-family: var(--font-mono); }
+.src-live { background: rgba(16,185,129,0.15); color: #10b981; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-family: var(--font-mono); }
+
+/* ─── Footer ─────────────────────────────────────── */
+footer { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.footer-disclaimer { font-size: 10px; color: var(--text4); font-style: italic; }

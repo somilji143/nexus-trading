@@ -42,8 +42,12 @@ const config = {
   // ─── Risk ──────────────────────────────────────
   risk: {
     accountSize: 10000,
-    riskPerTrade: 0.01, // 1%
-    maxDrawdown: 0.20,
+    riskPerTrade: 0.01,         // 1% per trade
+    maxDrawdown: 0.20,          // 20% max drawdown pause
+    dailyLossLimit: 0.03,       // 3% daily loss limit
+    weeklyLossLimit: 0.06,      // 6% weekly loss limit
+    maxActiveTrades: 3,         // Max simultaneous trades
+    maxCorrelatedExposure: 1,   // Max same-direction crypto trades
     tp1R: 1.5,
     tp2R: 2.5,
     tp3R: 4.0,

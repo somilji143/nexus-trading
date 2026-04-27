@@ -1,94 +1,71 @@
 /**
- * NEXUS — Data Fetcher
- * Fetches OHLCV from CoinGecko (BTC/ETH) and TwelveData (XAUUSD).
- * Retry logic, rate limiting, caching. Falls back to demo data.
+ * NEXUS v3 — Data Fetcher (Unified)
+ * Priority: Live API → Cache → Demo Fallback
+ * Always labels data source. Never silently mixes live and demo.
  */
 const logger = require('../core/logger');
 const config = require('../core/config');
+const { fetchLiveOHLCV, getBinancePrice } = require('./liveProvider');
 const { generateDemoData, getDemoLivePrice } = require('./demo-data');
-
+const { validateCandles, detectDataSource } = require('./dataQuality');
 const MOD = 'Fetcher';
 
 // ─── In-memory cache ────────────────────────────
 const cache = {};
+const dataMode = {}; // Track per-symbol data mode
 
 function getCached(key) {
   const entry = cache[key];
   if (!entry) return null;
   if (Date.now() - entry.ts > entry.ttl * 1000) { delete cache[key]; return null; }
-  return entry.data;
+  return entry;
 }
 
-function setCache(key, data, ttlSec) {
-  cache[key] = { data, ts: Date.now(), ttl: ttlSec };
+function setCache(key, data, source, ttlSec) {
+  cache[key] = { data, source, ts: Date.now(), ttl: ttlSec };
 }
 
 // ─── Rate Limiter ───────────────────────────────
 let lastRequestTime = 0;
-const MIN_REQUEST_GAP = 100; // ms
-
-async function rateLimitedFetch(url, options) {
-  const now = Date.now();
-  const gap = now - lastRequestTime;
-  if (gap < MIN_REQUEST_GAP) await sleep(MIN_REQUEST_GAP - gap);
-  lastRequestTime = Date.now();
-  return fetch(url, options);
-}
+const MIN_REQUEST_GAP = 100;
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// ─── Retry Logic ────────────────────────────────
-async function fetchWithRetry(url, maxRetries = 3) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const res = await rateLimitedFetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
-    } catch (err) {
-      logger.warn(MOD, `Fetch attempt ${attempt}/${maxRetries} failed: ${url}`, { error: err.message });
-      if (attempt < maxRetries) await sleep(2000 * attempt); // exponential backoff
-    }
-  }
-  return null;
-}
-
-// ─── Symbol Normalization ───────────────────────
-function normalizeSymbol(symbol) {
-  const map = {
-    XAUUSD: { source: 'twelvedata', tdSymbol: 'XAU/USD' },
-    BTCUSDT: { source: 'coingecko', cgId: 'bitcoin' },
-    ETHUSDT: { source: 'coingecko', cgId: 'ethereum' },
-  };
-  return map[symbol] || map.BTCUSDT;
-}
 
 // ─── Fetch OHLCV ────────────────────────────────
 async function fetchOHLCV(symbol, timeframe, count = 500) {
   const cacheKey = `ohlcv:${symbol}:${timeframe}`;
   const cached = getCached(cacheKey);
-  if (cached) return cached;
+  if (cached) return cached.data;
 
-  const norm = normalizeSymbol(symbol);
-  let candles = null;
-
+  // 1. Try live sources
+  let result = null;
   try {
-    if (norm.source === 'coingecko') {
-      candles = await fetchCoinGeckoOHLC(norm.cgId, timeframe, count);
-    } else if (norm.source === 'twelvedata' && config.twelveDataApiKey) {
-      candles = await fetchTwelveDataOHLC(norm.tdSymbol, timeframe, count);
-    }
+    const now = Date.now();
+    if (now - lastRequestTime < MIN_REQUEST_GAP) await sleep(MIN_REQUEST_GAP);
+    lastRequestTime = Date.now();
+
+    result = await fetchLiveOHLCV(symbol, timeframe, count);
   } catch (err) {
-    logger.error(MOD, `Fetch failed for ${symbol}/${timeframe}`, { error: err.message });
+    logger.warn(MOD, `Live fetch error for ${symbol}/${timeframe}`, { error: err.message });
   }
 
-  if (!candles || candles.length < 10) {
-    logger.warn(MOD, `Using demo data for ${symbol}/${timeframe}`);
+  let candles, source;
+
+  if (result && result.candles && result.candles.length >= 10) {
+    candles = result.candles;
+    source = result.source;
+    dataMode[symbol] = 'LIVE';
+    logger.info(MOD, `✅ LIVE data: ${candles.length} candles for ${symbol}/${timeframe} [${source}]`);
+  } else {
+    // 2. Fall back to demo
     candles = generateDemoData(symbol, timeframe, count);
+    source = 'DEMO';
+    dataMode[symbol] = 'DEMO';
+    logger.warn(MOD, `⚠️ DEMO data: ${candles.length} candles for ${symbol}/${timeframe} [synthetic]`);
   }
 
   const ttl = config.cacheTTL[timeframe] || 120;
-  setCache(cacheKey, candles, ttl);
-  logger.debug(MOD, `Fetched ${candles.length} candles for ${symbol}/${timeframe}`);
+  setCache(cacheKey, candles, source, ttl);
   return candles;
 }
 
@@ -104,62 +81,68 @@ async function fetchAllTimeframes(symbol) {
 
 // ─── Get latest price ───────────────────────────
 async function getLatestPrice(symbol) {
-  const norm = normalizeSymbol(symbol);
-  try {
-    if (norm.source === 'coingecko') {
-      const data = await fetchWithRetry(`${config.coingeckoBaseUrl}/simple/price?ids=${norm.cgId}&vs_currencies=usd&include_24hr_change=true`);
-      if (data && data[norm.cgId]) {
-        return { price: data[norm.cgId].usd, change24h: data[norm.cgId].usd_24h_change || 0 };
+  // 1. Try Binance (crypto)
+  if (symbol === 'BTCUSDT' || symbol === 'ETHUSDT') {
+    try {
+      const binancePrice = await getBinancePrice(symbol);
+      if (binancePrice && binancePrice.price > 0) {
+        return { price: binancePrice.price, change24h: binancePrice.change24h, source: 'BINANCE' };
       }
-    } else if (norm.source === 'twelvedata' && config.twelveDataApiKey) {
-      const data = await fetchWithRetry(`https://api.twelvedata.com/price?symbol=${norm.tdSymbol}&apikey=${config.twelveDataApiKey}`);
-      if (data && data.price) return { price: parseFloat(data.price), change24h: 0 };
-    }
-  } catch (err) {
-    logger.error(MOD, `Price fetch failed for ${symbol}`, { error: err.message });
+    } catch (e) {}
   }
-  // Fallback: use demo live price (consistent small-drift pricing)
+
+  // 2. Try TwelveData (Gold)
+  if (symbol === 'XAUUSD' && config.twelveDataApiKey) {
+    try {
+      const res = await fetch(`https://api.twelvedata.com/price?symbol=XAU/USD&apikey=${config.twelveDataApiKey}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.price) return { price: parseFloat(data.price), change24h: 0, source: 'TWELVEDATA' };
+      }
+    } catch (e) {}
+  }
+
+  // 3. Try CoinGecko (fallback for crypto)
+  if (symbol === 'BTCUSDT' || symbol === 'ETHUSDT') {
+    const cgId = symbol === 'BTCUSDT' ? 'bitcoin' : 'ethereum';
+    try {
+      const res = await fetch(`${config.coingeckoBaseUrl}/simple/price?ids=${cgId}&vs_currencies=usd&include_24hr_change=true`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data[cgId]) {
+          return { price: data[cgId].usd, change24h: data[cgId].usd_24h_change || 0, source: 'COINGECKO' };
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 4. Demo fallback
   const cached = getCached(`ohlcv:${symbol}:1h`);
-  if (cached && cached.length) {
-    const lastClose = cached[cached.length - 1].close;
-    const prevClose = cached.length > 24 ? cached[cached.length - 25].close : lastClose;
+  if (cached && cached.data && cached.data.length) {
+    const lastClose = cached.data[cached.data.length - 1].close;
+    const prevClose = cached.data.length > 24 ? cached.data[cached.data.length - 25].close : lastClose;
     const change = prevClose > 0 ? ((lastClose - prevClose) / prevClose) * 100 : 0;
-    return { price: getDemoLivePrice(symbol), change24h: Math.round(change * 100) / 100 };
+    return { price: getDemoLivePrice(symbol), change24h: Math.round(change * 100) / 100, source: 'DEMO' };
   }
-  return { price: getDemoLivePrice(symbol), change24h: 0 };
+  return { price: getDemoLivePrice(symbol), change24h: 0, source: 'DEMO' };
 }
 
-// ─── CoinGecko OHLC ────────────────────────────
-async function fetchCoinGeckoOHLC(cgId, timeframe, count) {
-  const daysMap = { '15m': 1, '1h': 7, '4h': 30, '1d': 365, '1w': 365 };
-  const days = daysMap[timeframe] || 7;
-  const url = `${config.coingeckoBaseUrl}/coins/${cgId}/ohlc?vs_currency=usd&days=${days}`;
-  const data = await fetchWithRetry(url);
-  if (!data || !Array.isArray(data)) return null;
-
-  return data.map(([ts, o, h, l, c]) => ({
-    time: Math.floor(ts / 1000),
-    open: o, high: h, low: l, close: c,
-    volume: Math.round(1000 + Math.random() * 5000),
-  }));
+// ─── Data Mode Status ───────────────────────────
+function getDataMode(symbol) {
+  return dataMode[symbol] || 'UNKNOWN';
 }
 
-// ─── TwelveData OHLC ────────────────────────────
-async function fetchTwelveDataOHLC(tdSymbol, timeframe, count) {
-  const tfMap = { '15m': '15min', '1h': '1h', '4h': '4h', '1d': '1day', '1w': '1week' };
-  const tf = tfMap[timeframe] || '1h';
-  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSymbol)}&interval=${tf}&outputsize=${count}&apikey=${config.twelveDataApiKey}`;
-  const data = await fetchWithRetry(url);
-  if (!data || !data.values) return null;
-
-  return data.values.reverse().map(v => ({
-    time: Math.floor(new Date(v.datetime).getTime() / 1000),
-    open: parseFloat(v.open),
-    high: parseFloat(v.high),
-    low: parseFloat(v.low),
-    close: parseFloat(v.close),
-    volume: parseInt(v.volume) || 1000,
-  }));
+function getAllDataModes() {
+  const modes = {};
+  for (const sym of Object.keys(config.assets)) {
+    modes[sym] = dataMode[sym] || 'UNKNOWN';
+  }
+  const isAnyLive = Object.values(modes).some(m => m === 'LIVE');
+  return {
+    modes,
+    globalMode: isAnyLive ? 'LIVE' : 'DEMO',
+    description: isAnyLive ? 'Connected to live market data' : 'Using synthetic demo data — signals are simulated',
+  };
 }
 
-module.exports = { fetchOHLCV, fetchAllTimeframes, getLatestPrice, normalizeSymbol };
+module.exports = { fetchOHLCV, fetchAllTimeframes, getLatestPrice, getDataMode, getAllDataModes };

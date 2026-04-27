@@ -1,6 +1,7 @@
 /**
- * NEXUS — Main Server
- * Express app with all API routes, scheduler, and WebSocket.
+ * NEXUS v3 — Main Server
+ * Express app with all API routes, scheduler, rate limiting.
+ * Data mode awareness: clearly labels LIVE vs DEMO.
  */
 const express = require('express');
 const cors = require('cors');
@@ -9,10 +10,11 @@ const config = require('./src/core/config');
 const logger = require('./src/core/logger');
 const db = require('./src/db/database');
 const { runSignalCheck, updateSignalOutcomes } = require('./src/signal_engine/generator');
-const { fetchOHLCV, getLatestPrice } = require('./src/data_engine/fetcher');
+const { fetchOHLCV, getLatestPrice, getAllDataModes } = require('./src/data_engine/fetcher');
 const { generateDemoData } = require('./src/data_engine/demo-data');
 const { runBacktest, runMonteCarlo } = require('./src/backtester/engine');
 const { calculateFullConfluence } = require('./src/analysis_engine/confluence');
+const { getRiskState } = require('./src/signal_engine/risk_manager');
 const paperTrader = require('./src/paper_trading/engine');
 
 const app = express();
@@ -20,13 +22,44 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ─── Simple Rate Limiter ────────────────────────
+const rateLimits = {};
+function rateLimit(key, maxPerMin = 10) {
+  const now = Date.now();
+  if (!rateLimits[key]) rateLimits[key] = [];
+  rateLimits[key] = rateLimits[key].filter(t => now - t < 60000);
+  if (rateLimits[key].length >= maxPerMin) return false;
+  rateLimits[key].push(now);
+  return true;
+}
+
 // ─── State ──────────────────────────────────────
 let backtestResults = {};
 let backtestStatus = 'pending';
 
 // ─── API: Health ────────────────────────────────
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), dbConnected: !!db.getDb(), backtestStatus, timestamp: new Date().toISOString() });
+  const dataModes = getAllDataModes();
+  res.json({
+    status: 'ok',
+    version: '3.0.0',
+    uptime: Math.round(process.uptime()),
+    dbConnected: !!db.getDb(),
+    backtestStatus,
+    dataMode: dataModes.globalMode,
+    dataModeDetail: dataModes.description,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// ─── API: Data Mode ─────────────────────────────
+app.get('/api/data-mode', (req, res) => {
+  res.json(getAllDataModes());
+});
+
+// ─── API: Risk State ────────────────────────────
+app.get('/api/risk-state', (req, res) => {
+  res.json(getRiskState());
 });
 
 // ─── API: Assets ────────────────────────────────
@@ -36,8 +69,8 @@ app.get('/api/assets', (req, res) => {
 
 app.get('/api/assets/:symbol/price', async (req, res) => {
   try {
-    const { price, change24h } = await getLatestPrice(req.params.symbol.toUpperCase());
-    res.json({ symbol: req.params.symbol.toUpperCase(), price, change24h });
+    const result = await getLatestPrice(req.params.symbol.toUpperCase());
+    res.json({ symbol: req.params.symbol.toUpperCase(), ...result });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -72,9 +105,12 @@ app.get('/api/signals/:id', (req, res) => {
 });
 
 app.post('/api/signals/generate/:symbol', async (req, res) => {
+  const ip = req.ip || 'unknown';
+  if (!rateLimit(`signal:${ip}`, 6)) {
+    return res.status(429).json({ error: 'Rate limit: max 6 signal generations per minute' });
+  }
   try {
     const result = await runSignalCheck(req.params.symbol.toUpperCase());
-    // Auto-open paper trade if signal generated
     if (result.status === 'signal' && result.signal) {
       const signal = db.getSignalById(result.signal.id);
       if (signal) paperTrader.openTradeFromSignal(signal);
@@ -114,7 +150,14 @@ app.get('/api/ohlcv/:symbol', async (req, res) => {
 // ─── API: Config ────────────────────────────────
 app.get('/api/config', (req, res) => {
   const { getCurrentSession } = require('./src/analysis_engine/session');
-  res.json({ hasApiKey: !!config.twelveDataApiKey, session: getCurrentSession(new Date()), assets: Object.keys(config.assets) });
+  const dataModes = getAllDataModes();
+  res.json({
+    hasApiKey: !!config.twelveDataApiKey,
+    session: getCurrentSession(new Date()),
+    assets: Object.keys(config.assets),
+    dataMode: dataModes.globalMode,
+    dataModeDescription: dataModes.description,
+  });
 });
 
 app.post('/api/config', (req, res) => {
@@ -143,9 +186,38 @@ app.post('/api/paper-trading/reset', (req, res) => {
   res.json({ success: true, state: paperTrader.getState() });
 });
 
+// ─── API: Debug ─────────────────────────────────
+app.get('/api/debug/data-test', async (req, res) => {
+  const results = {};
+  for (const symbol of Object.keys(config.assets)) {
+    results[symbol] = {};
+    for (const tf of ['1h', '4h', '1d']) {
+      try {
+        const candles = await fetchOHLCV(symbol, tf, 100);
+        const mode = getAllDataModes().modes[symbol];
+        results[symbol][tf] = {
+          success: candles && candles.length >= 10,
+          count: candles?.length || 0,
+          source: mode,
+          latestCandle: candles?.length ? new Date(candles[candles.length - 1].time * 1000).toISOString() : null,
+        };
+      } catch (e) {
+        results[symbol][tf] = { success: false, error: e.message };
+      }
+    }
+  }
+  res.json(results);
+});
+
 // ─── Serve Frontend ─────────────────────────────
 app.get('/{*path}', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ─── Error Handler ──────────────────────────────
+app.use((err, req, res, next) => {
+  logger.error('Server', `Unhandled error: ${err.message}`, { stack: err.stack });
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // ─── Startup ────────────────────────────────────
@@ -158,17 +230,12 @@ app.listen(config.port, () => {
   ║   ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║       ║
   ║   ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║       ║
   ║   ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝╚══════╝       ║
-  ║   Institutional Signal Platform v2.0                 ║
+  ║   Institutional Signal Platform v3.0                 ║
   ║   Dashboard: http://localhost:${config.port}                   ║
   ╚══════════════════════════════════════════════════════╝`);
 
-  // Initialize DB
   db.runMigrations();
-
-  // Run backtests
   runStartupBacktests();
-
-  // Start scheduler
   startScheduler();
 });
 
@@ -187,23 +254,43 @@ async function runStartupBacktests() {
     for (const cfg of configs) {
       try {
         logger.info('Boot', `Backtesting ${symbol} ${cfg.label}...`);
-        const candles = generateDemoData(symbol, cfg.tf, cfg.count);
+
+        // Try live data first, fall back to demo
+        let candles;
+        let dataSource = 'DEMO';
+        try {
+          const { fetchLiveOHLCV } = require('./src/data_engine/liveProvider');
+          const liveResult = await fetchLiveOHLCV(symbol, cfg.tf, cfg.count);
+          if (liveResult && liveResult.candles && liveResult.candles.length >= 100) {
+            candles = liveResult.candles;
+            dataSource = liveResult.source;
+          }
+        } catch (e) {}
+
+        if (!candles) {
+          candles = generateDemoData(symbol, cfg.tf, cfg.count);
+          dataSource = 'DEMO';
+        }
+
         const result = runBacktest({ candles, symbol });
         let mc = null;
         if (result.trades && result.trades.length > 5) mc = runMonteCarlo(result.trades);
+
         const tradeCount = result.totalTrades || 0;
-        // Thin equity curve
+
+        // Thin equity curve for API response
         if (result.equityCurve && result.equityCurve.length > 200) {
           const step = Math.floor(result.equityCurve.length / 200);
           result.equityCurve = result.equityCurve.filter((_, i) => i % step === 0);
         }
         delete result.trades;
-        backtestResults[symbol][cfg.tf] = { ...result, monteCarlo: mc };
+        backtestResults[symbol][cfg.tf] = { ...result, monteCarlo: mc, dataSource };
+
         const status = result.isValid ? '✅ VALID' : '⚠️ NOT VALIDATED';
-        logger.info('Boot', `  ${symbol} ${cfg.tf}: ${tradeCount} trades | WR: ${result.winRate}% | PF: ${result.profitFactor} | ${status}`);
+        const sourceLabel = dataSource === 'DEMO' ? ' [DEMO]' : ` [${dataSource}]`;
+        logger.info('Boot', `  ${symbol} ${cfg.tf}: ${tradeCount} trades | WR: ${result.winRate}% | PF: ${result.profitFactor} | ${status}${sourceLabel}`);
         if (!result.isValid && result.failures) logger.warn('Boot', `  Failures: ${result.failures.join(', ')}`);
 
-        // Save validation report
         db.insertValidationReport({ symbol, timeframe: cfg.tf, totalTrades: tradeCount, winRate: result.winRate, profitFactor: typeof result.profitFactor === 'string' ? 999 : result.profitFactor, sharpeRatio: result.sharpe, maxDrawdown: result.maxDrawdown, avgRR: result.avgRR, isValid: result.isValid, failureReasons: result.failures?.join(', '), rawStats: result });
       } catch (err) {
         logger.error('Boot', `Backtest failed: ${symbol} ${cfg.tf}`, { error: err.message });
@@ -216,7 +303,7 @@ async function runStartupBacktests() {
 }
 
 function startScheduler() {
-  // Signal check every 5 minutes — auto-open paper trades
+  // Signal check every 5 minutes
   setInterval(async () => {
     for (const symbol of Object.keys(config.assets)) {
       try {
@@ -229,17 +316,17 @@ function startScheduler() {
     }
   }, config.scheduler.signalCheckIntervalMs);
 
-  // Tracker every 5 minutes
+  // Signal tracker
   setInterval(async () => {
     try { await updateSignalOutcomes(); } catch (e) { logger.error('Scheduler', 'Tracker failed', { error: e.message }); }
   }, config.scheduler.trackerIntervalMs);
 
-  // Paper trading tick every 30 seconds
+  // Paper trading tick
   setInterval(async () => {
     try { await paperTrader.tick(); } catch (e) { logger.error('Scheduler', 'Paper trade tick failed', { error: e.message }); }
   }, 30 * 1000);
 
-  // Price update every minute
+  // Price update
   setInterval(async () => {
     for (const symbol of Object.keys(config.assets)) {
       try {
